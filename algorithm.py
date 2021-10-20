@@ -56,8 +56,42 @@ def equalize(img: ndarray) -> ndarray:
     return gray[img]
 
 
+@split_channel
 def denoise(img: ndarray) -> ndarray:
-    return None
+    def median_filter_slow(img: ndarray, k: int) -> ndarray:
+        if k % 2 == 0:
+            k += 1
+        p = k // 2
+        ret = img.copy()
+        w, h = img.shape
+        for i in range(p, w - p):
+            for j in range(p, h - p):
+                ret[i][j] = np.median(img[i-p:i+p, j-p:j+p])
+        return ret
+
+    def median_filter_fast(img: ndarray, k: int) -> ndarray:
+        if img.dtype == np.uint8:
+            img = img / 255
+        if k % 2 == 0:
+            k += 1
+        p = k // 2
+        w, h = img.shape
+
+        # extend the image to handle margin cases
+        row_ext = img.copy()
+        for i in range(p):
+            row_ext = np.insert(row_ext, 0, img[i + 1, :], axis=0)
+        ext = row_ext.copy()
+        for i in range(p):
+            ext = np.insert(ext, 0, row_ext[:, i + 1], axis=1)
+
+        # trick: put k*k neighbors of a pixel into the array
+        tmp = np.dstack([np.roll(ext, -i, axis=1) for i in range(k)])
+        ret = np.dstack([np.roll(tmp, -i, axis=0) for i in range(k)])
+        ret = np.median(ret, axis=2)[:w, :h]
+        return ret
+
+    return median_filter_fast(img, 5)
 
 
 def interpolate(img: ndarray) -> ndarray:
