@@ -1,6 +1,28 @@
-from typing import List
+from typing import List, Callable
+from functools import wraps
 import numpy as np
 from numpy import ndarray
+
+
+def split_channel(func: Callable[[ndarray], ndarray]):
+    # check the input image
+    # assume decorated functions only accept gray-scale image
+    # if the input has several channels,
+    # separately call decorated function on each channel
+    # and merge the result at the end.
+
+    @wraps(func)
+    def wrapper(*args):
+        img: ndarray = args[0]
+        if img.ndim == 2:    # gray-scale
+            return func(img)
+        elif img.ndim == 3:  # rgb
+            channels = [func(img[:, :, i]) for i in range(3)]
+            return np.dstack(channels)
+        else:
+            raise ValueError('invalid argument ndim:', img.ndim)
+
+    return wrapper
 
 
 def plane(img: ndarray) -> ndarray:
@@ -16,30 +38,22 @@ def plane(img: ndarray) -> ndarray:
     return np.vstack(_stacked)
 
 
+@split_channel
 def equalize(img: ndarray) -> ndarray:
     G = 256
 
-    # split RGB channels
-    channels: List[ndarray]
-    if img.ndim == 2:
-        channels = [img]
-    else:
-        channels = [img[:, :, i] for i in range(3)]
+    # image as float -> uint8
+    if img.dtype in [np.float16, np.float32, np.float64]:
+        img = (img * (G - 1)).astype(np.uint8)
 
-    for i, channel in enumerate(channels):
-        # image as float -> uint8
-        if channel.dtype in [np.float16, np.float32, np.float64]:
-            channel = (channel * (G - 1)).astype(np.uint8)
+    # count each gray level [0, G)
+    gray: ndarray = np.bincount(img.flatten())
+    if gray.shape[0] < G:
+        gray = np.pad(gray, (0, G - gray.shape[0]))
 
-        # count each gray level [0, 256)
-        gray: ndarray = np.bincount(channel.flatten())
-        if gray.shape[0] < G:
-            gray = np.pad(gray, (0, G - gray.shape[0]))
-
-        # calculate new gray level
-        gray = np.cumsum(gray / np.sum(gray))
-        channels[i] = gray[channel]
-    return np.dstack(channels) if img.ndim == 3 else channels[0]
+    # calculate new gray level
+    gray = np.cumsum(gray / np.sum(gray))
+    return gray[img]
 
 
 def denoise(img: ndarray) -> ndarray:
