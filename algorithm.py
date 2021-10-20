@@ -63,10 +63,10 @@ def denoise(img: ndarray) -> ndarray:
             k += 1
         p = k // 2
         ret = img.copy()
-        w, h = img.shape
+        h, w = img.shape
         for i in range(p, w - p):
             for j in range(p, h - p):
-                ret[i][j] = np.median(img[i-p:i+p, j-p:j+p])
+                ret[j, i] = np.median(img[j - p:j + p, i - p:i + p])
         return ret
 
     def median_filter_fast(img: ndarray, k: int) -> ndarray:
@@ -75,7 +75,7 @@ def denoise(img: ndarray) -> ndarray:
         if k % 2 == 0:
             k += 1
         p = k // 2
-        w, h = img.shape
+        h, w = img.shape
 
         # extend the image to handle margin cases
         row_ext = img.copy()
@@ -88,7 +88,7 @@ def denoise(img: ndarray) -> ndarray:
         # trick: put k*k neighbors of a pixel into the array
         tmp = np.dstack([np.roll(ext, -i, axis=1) for i in range(k)])
         ret = np.dstack([np.roll(tmp, -i, axis=0) for i in range(k)])
-        ret = np.median(ret, axis=2)[:w, :h]
+        ret = np.median(ret, axis=2)[:h, :w]
         return ret
 
     return median_filter_fast(img, 5)
