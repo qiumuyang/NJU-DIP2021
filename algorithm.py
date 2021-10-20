@@ -17,7 +17,8 @@ def plane(img: ndarray) -> ndarray:
 
 
 def equalize(img: ndarray) -> ndarray:
-    G = 255
+    G = 256
+
     # split RGB channels
     channels: List[ndarray]
     if img.ndim == 2:
@@ -25,11 +26,19 @@ def equalize(img: ndarray) -> ndarray:
     else:
         channels = [img[:, :, i] for i in range(3)]
 
-    for i, ch in enumerate(channels):
-        ch = ch.astype(np.int32)
-        gray = np.bincount(ch.flatten())
-        gray = (np.cumsum(gray / np.sum(gray)) * G).astype(np.int32)
-        channels[i] = gray[ch]
+    for i, channel in enumerate(channels):
+        # image as float -> uint8
+        if channel.dtype in [np.float16, np.float32, np.float64]:
+            channel = (channel * (G - 1)).astype(np.uint8)
+
+        # count each gray level [0, 256)
+        gray: ndarray = np.bincount(channel.flatten())
+        if gray.shape[0] < G:
+            gray = np.pad(gray, (0, G - gray.shape[0]))
+
+        # calculate new gray level
+        gray = np.cumsum(gray / np.sum(gray))
+        channels[i] = gray[channel]
     return np.dstack(channels) if img.ndim == 3 else channels[0]
 
 
