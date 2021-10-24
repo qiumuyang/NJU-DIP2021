@@ -100,8 +100,11 @@ def interpolate(img: ndarray) -> ndarray:
     def bilinear(img: ndarray, kw: float, kh: float) -> ndarray:
         # prepare the param matrix (shape [h, w, 4])
         r10 = np.roll(img, -1, axis=1)
+        r10[:, -1] = img[:, -1]  # margin
         r01 = np.roll(img, -1, axis=0)
+        r01[-1, :] = img[-1, :]  # margin
         r11 = np.roll(r01, -1, axis=1)
+        r11[:, -1] = r01[:, -1]  # margin
         # p0 = f(1, 0) - f(0, 0)
         p0 = r10 - img
         # p1 = f(0, 1) - f(0, 0)
@@ -125,10 +128,10 @@ def interpolate(img: ndarray) -> ndarray:
 
         # calculate coordinate for multiply
         # (shape [h, w, 1, 4] @ shape [h, w, 4, 1] => shape[h, w, 1, 1])
-        xyxy: ndarray = np.dstack(
+        xy_values: ndarray = np.dstack(
             [xy[:, :, 0], xy[:, :, 1], xy[:, :, 0] * xy[:, :, 1], np.ones((hh, ww))])
         ret = np.matmul(selected_params.reshape(hh, ww, 1, 4),
-                        xyxy.reshape(hh, ww, 4, 1))
+                        xy_values.reshape(hh, ww, 4, 1))
         ret = ret.reshape(hh, ww)
         return ret
 
