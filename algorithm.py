@@ -2,6 +2,7 @@ from typing import List, Callable
 from functools import wraps
 import numpy as np
 from numpy import ndarray
+from numpy.fft import fft2, fftshift, ifft2, ifftshift
 
 
 def split_channel(func: Callable[[ndarray], ndarray]):
@@ -101,11 +102,11 @@ def interpolate(img: ndarray) -> ndarray:
         r10 = np.roll(img, -1, axis=1)
         r01 = np.roll(img, -1, axis=0)
         r11 = np.roll(r01, -1, axis=1)
-        # f(1, 0) - f(0, 0)
+        # p0 = f(1, 0) - f(0, 0)
         p0 = r10 - img
-        # f(0, 1) - f(0, 0)
+        # p1 = f(0, 1) - f(0, 0)
         p1 = r01 - img
-        # f(1, 1) + f(0, 0) - f(0, 1) - f(1, 0)
+        # p2 = f(1, 1) + f(0, 0) - f(0, 1) - f(1, 0)
         p2 = r11 + img - r01 - r10
         # f(x, y) = p0 * x + p1 * y + p2 * x * y + f(0, 0)
         params = np.dstack([p0, p1, p2, img])  # p3 = f(0, 0)
@@ -137,11 +138,27 @@ def interpolate(img: ndarray) -> ndarray:
 
 
 def dft(img: ndarray) -> ndarray:
-    return None
+    f = fftshift(fft2(img))
+    f = np.log(np.abs(f))
+    return f
 
 
 def butterworth(img: ndarray) -> ndarray:
-    return None
+    def _butterworth(D_0: float, k: int = 1):
+        freq = fftshift(fft2(img))
+        h, w = freq.shape
+        xs = np.repeat(np.array([range(w)]), h, axis=0)
+        ys = np.repeat(np.array([range(h)]), w, axis=0).transpose()
+        # D_uv = sqrt((u - M / 2) ^ 2 + (v - N / 2) ^ 2)
+        xs = np.power((xs - w / 2), 2)
+        ys = np.power((ys - h / 2), 2)
+        D_uv = np.power(xs + ys, 0.5)
+        H_uv = 1 / (1 + np.power(D_uv / D_0, 2 * k))
+        # G_uv = H_uv * F_uv
+        freq *= H_uv
+        return np.abs(ifft2(ifftshift(freq)))
+
+    return _butterworth(70, 1)
 
 
 def canny(img: ndarray) -> ndarray:
