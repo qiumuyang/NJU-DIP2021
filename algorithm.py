@@ -6,11 +6,12 @@ from numpy.fft import fft2, fftshift, ifft2, ifftshift
 
 
 def split_channel(func: Callable[[ndarray], ndarray]):
-    # check the input image
-    # assume decorated functions only accept gray-scale image
-    # if the input has several channels,
-    # separately call decorated function on each channel
-    # and merge the result at the end.
+    ''' Split channels of the input image.
+
+    Assume the decorated function only accept gray-scale image.
+
+    If the input has more than one channels, separately call decorated function on each channel and merge the result at the end.
+    '''
 
     @wraps(func)
     def wrapper(*args):
@@ -21,7 +22,7 @@ def split_channel(func: Callable[[ndarray], ndarray]):
             channels = [func(img[:, :, i]) for i in range(3)]
             return np.dstack(channels)
         else:
-            raise ValueError('invalid argument ndim:', img.ndim)
+            raise ValueError('invalid image ndim:', img.ndim)
 
     return wrapper
 
@@ -92,7 +93,7 @@ def denoise(img: ndarray) -> ndarray:
 
     if img.dtype == np.uint8:
         img = img / 255
-    return median_filter_fast(img, 5)
+    return median_filter_fast(img, 3)
 
 
 @split_channel
