@@ -40,21 +40,37 @@ def plane(img: ndarray) -> ndarray:
     return np.vstack(_stacked)
 
 
-@split_channel
-def equalize(img: ndarray) -> ndarray:
-    G = 256
+def histogram(_arr: ndarray, level: int = 256) -> ndarray:
+    arr = _arr.copy()
+    assert(np.all(arr >= 0))
 
-    # image as float -> uint8
-    if img.dtype in [np.float16, np.float32, np.float64]:
-        img = (img * (G - 1)).astype(np.uint8)
+    # scale down to levels
+    if np.any(arr != 0):
+        arr = arr / np.max(arr) * (level - 1)
+
+    # float -> int
+    if arr.dtype in [np.float32, np.float64]:
+        arr = arr.astype(np.uint)
 
     # count each gray level [0, G)
-    gray: ndarray = np.bincount(img.flatten())
-    if gray.shape[0] < G:
-        gray = np.pad(gray, (0, G - gray.shape[0]))
+    count: ndarray = np.bincount(arr.flatten())
+    if count.shape[0] < level:
+        count = np.pad(count, (0, level - count.shape[0]))
+
+    return count / np.sum(count)
+
+
+@split_channel
+def equalize(img: ndarray) -> ndarray:
+    level = 256
+
+    hist = histogram(img, level)
+
+    img = (img * (level - 1)).astype(np.uint)
 
     # calculate new gray level
-    gray = np.cumsum(gray / np.sum(gray))
+    gray = np.cumsum(hist)
+
     return gray[img]
 
 
@@ -166,7 +182,88 @@ def butterworth(img: ndarray) -> ndarray:
 
 
 def canny(img: ndarray) -> ndarray:
-    return None
+    h, w = img.shape
+    xs = np.repeat(np.array([range(w)]), h, axis=0)
+    ys = np.repeat(np.array([range(h)]), w, axis=0).transpose()
+    xs_sub_1 = xs - np.ones(img.shape, dtype='int')
+    xs_add_1 = xs + np.ones(img.shape, dtype='int')
+    ys_sub_1 = ys - np.ones(img.shape, dtype='int')
+    ys_add_1 = ys + np.ones(img.shape, dtype='int')
+
+    xs_sub_1[xs_sub_1 < 0] = 0
+    xs_add_1[xs_add_1 >= w] = w - 1
+    ys_sub_1[ys_sub_1 < 0] = 0
+    ys_add_1[ys_add_1 >= h] = h - 1
+
+    # Calculate gradient
+    img_10 = img[ys_sub_1, xs]
+    img_12 = img[ys_add_1, xs]
+    img_01 = img[ys, xs_sub_1]
+    img_21 = img[ys, xs_add_1]
+
+    grad_x = (img_21 - img_01) / 2
+    grad_y = (img_12 - img_10) / 2
+    grad: ndarray = np.power(grad_x * grad_x + grad_y * grad_y, 0.5)
+
+    # Non-Maximum Suppression
+    epsilon = np.finfo(np.float64).eps
+    grad_x_fix = np.where(grad_x == 0, epsilon, grad_x)
+    grad_y_fix = np.where(grad_y == 0, epsilon, grad_y)
+    grad_k: ndarray = grad_y / grad_x_fix
+    grad_k_abs = np.abs(grad_k)
+    grad_k_imp: ndarray = np.ones(grad_k.shape) - grad_k_abs
+    grad_t: ndarray = grad_x / grad_y_fix
+    grad_t_abs = np.abs(grad_t)
+    grad_t_imp: ndarray = np.ones(grad_t.shape) - grad_t_abs
+
+    grad_00 = grad[ys_sub_1, xs_sub_1]
+    grad_01 = grad[ys, xs_sub_1]
+    grad_02 = grad[ys_add_1, xs_sub_1]
+    grad_10 = grad[ys_sub_1, xs]
+    grad_11 = grad
+    grad_12 = grad[ys_add_1, xs]
+    grad_20 = grad[ys_sub_1, xs_add_1]
+    grad_21 = grad[ys, xs_add_1]
+    grad_22 = grad[ys_add_1, xs_add_1]
+
+    descriminate = [(grad_k >= 1, grad_t_abs, grad_t_imp,
+                     grad_10, grad_20, grad_12, grad_02),
+                    (grad_k <= -1, grad_t_abs, grad_t_imp,
+                     grad_10, grad_00, grad_12, grad_22),
+                    ((grad_k < 1) & (grad_k >= 0), grad_k_abs, grad_k_imp,
+                     grad_21, grad_20, grad_01, grad_02),
+                    ((grad_k > -1) & (grad_k < 0), grad_k_abs, grad_k_imp,
+                     grad_21, grad_22, grad_01, grad_00), ]
+
+    d1 = np.zeros(img.shape)
+    d2 = np.zeros(img.shape)
+    for cond, gr, gr_imp, p0, p1, p2, p3 in descriminate:
+        d1 = np.where(cond, gr * p0 + gr_imp * p1, d1)
+        d2 = np.where(cond, gr * p2 + gr_imp * p3, d2)
+
+    grad = np.where((grad >= d1) & (grad >= d2), grad, 0)
+
+    # Double thresholding
+    level = 512
+    high, low = 0.8, 0.4
+    hist = histogram(grad, level)
+    cumsum = np.cumsum(hist)
+
+    thresh_high = np.min(np.where(cumsum > high)) / level
+    if np.all(cumsum > low):
+        thresh_low = 0
+    else:
+        thresh_low = np.max(np.where(cumsum < low)) / level
+
+    neighbor = np.dstack(
+        [grad_00, grad_01, grad_02,
+         grad_10, grad_11, grad_12,
+         grad_20, grad_21, grad_22]
+    )
+
+    grad = np.where((grad > thresh_low) &
+                    (np.max(neighbor, axis=2) > thresh_high), 1, 0)
+    return grad
 
 
 def morphology(img: ndarray) -> ndarray:
