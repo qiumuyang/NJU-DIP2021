@@ -40,36 +40,15 @@ def plane(img: ndarray) -> ndarray:
     return np.vstack(_stacked)
 
 
-def histogram(_arr: ndarray, level: int = 256) -> ndarray:
-    arr = _arr.copy()
-    assert(np.all(arr >= 0))
-
-    # scale down to levels
-    if np.any(arr != 0):
-        arr = arr / np.max(arr) * (level - 1)
-
-    # float -> int
-    if arr.dtype in [np.float32, np.float64]:
-        arr = arr.astype(np.uint)
-
-    # count each gray level [0, G)
-    count: ndarray = np.bincount(arr.flatten())
-    if count.shape[0] < level:
-        count = np.pad(count, (0, level - count.shape[0]))
-
-    return count / np.sum(count)
-
-
 @split_channel
 def equalize(img: ndarray) -> ndarray:
     level = 256
-
-    hist = histogram(img, level)
-
     img = (img * (level - 1)).astype(np.uint)
 
+    hist, bins = np.histogram(img, level, (0, level))
+
     # calculate new gray level
-    gray = np.cumsum(hist)
+    gray = np.cumsum(hist) / np.sum(hist)
 
     return gray[img]
 
@@ -195,12 +174,18 @@ def canny(img: ndarray) -> ndarray:
     ys_sub_1[ys_sub_1 < 0] = 0
     ys_add_1[ys_add_1 >= h] = h - 1
 
-    # Calculate gradient
+    gauss = np.array([2, 4, 5, 4, 2,
+                      4, 9, 12, 9, 4,
+                      5, 12, 15, 12, 5,
+                      4, 9, 12, 9, 4,
+                      2, 4, 5, 4, 2]).reshape(5, 5) / 159
+
     img_10 = img[ys_sub_1, xs]
     img_12 = img[ys_add_1, xs]
     img_01 = img[ys, xs_sub_1]
     img_21 = img[ys, xs_add_1]
 
+    # Calculate gradient
     grad_x = (img_21 - img_01) / 2
     grad_y = (img_12 - img_10) / 2
     grad: ndarray = np.power(grad_x * grad_x + grad_y * grad_y, 0.5)
@@ -240,20 +225,14 @@ def canny(img: ndarray) -> ndarray:
     for cond, gr, gr_imp, p0, p1, p2, p3 in descriminate:
         d1 = np.where(cond, gr * p0 + gr_imp * p1, d1)
         d2 = np.where(cond, gr * p2 + gr_imp * p3, d2)
-
     grad = np.where((grad >= d1) & (grad >= d2), grad, 0)
 
     # Double thresholding
-    level = 512
     high, low = 0.8, 0.4
-    hist = histogram(grad, level)
-    cumsum = np.cumsum(hist)
 
-    thresh_high = np.min(np.where(cumsum > high)) / level
-    if np.all(cumsum > low):
-        thresh_low = 0
-    else:
-        thresh_low = np.max(np.where(cumsum < low)) / level
+    sorted_grad = np.sort(grad.reshape(-1))
+    thresh_low = sorted_grad[int(len(sorted_grad) * low)]
+    thresh_high = sorted_grad[int(len(sorted_grad) * high)]
 
     neighbor = np.dstack(
         [grad_00, grad_01, grad_02,
