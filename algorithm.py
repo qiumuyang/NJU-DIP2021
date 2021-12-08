@@ -27,6 +27,41 @@ def split_channel(func: Callable[[ndarray], ndarray]):
     return wrapper
 
 
+class Neighbors:
+    ''' Get k*k neighbors for each item in the input array.
+
+    '''
+
+    def __init__(self, arr: ndarray, k: int) -> None:
+        assert(k % 2 == 1)
+        assert(arr.ndim == 2)
+
+        self.k = k
+
+        p = k // 2
+        h, w = arr.shape
+        xs = np.repeat(np.arange(w), h).reshape(w, h).transpose()
+        ys = np.repeat(np.arange(h), w).reshape(h, w)
+
+        tmp = []
+        for y in range(-p, p + 1):
+            for x in range(-p, p + 1):
+                xs_offset = xs + np.ones(arr.shape, dtype='int') * x
+                ys_offset = ys + np.ones(arr.shape, dtype='int') * y
+                xs_offset[xs_offset < 0] = 0
+                xs_offset[xs_offset >= w] = w - 1
+                ys_offset[ys_offset < 0] = 0
+                ys_offset[ys_offset >= h] = h - 1
+                tmp.append(arr[ys_offset, xs_offset])
+
+        self.neighbors: ndarray = np.dstack(tmp)
+
+    def at(self, x: int, y: int) -> ndarray:
+        y += self.k // 2
+        x += self.k // 2
+        return self.neighbors[:, :, y * self.k + x]
+
+
 def plane(img: ndarray) -> ndarray:
     def kth_plane(img: ndarray, k: int) -> ndarray:
         return np.where(img & (1 << k), 1, 0)
@@ -161,33 +196,19 @@ def butterworth(img: ndarray) -> ndarray:
 
 
 def canny(img: ndarray) -> ndarray:
-    h, w = img.shape
-    xs = np.repeat(np.array([range(w)]), h, axis=0)
-    ys = np.repeat(np.array([range(h)]), w, axis=0).transpose()
-    xs_sub_1 = xs - np.ones(img.shape, dtype='int')
-    xs_add_1 = xs + np.ones(img.shape, dtype='int')
-    ys_sub_1 = ys - np.ones(img.shape, dtype='int')
-    ys_add_1 = ys + np.ones(img.shape, dtype='int')
-
-    xs_sub_1[xs_sub_1 < 0] = 0
-    xs_add_1[xs_add_1 >= w] = w - 1
-    ys_sub_1[ys_sub_1 < 0] = 0
-    ys_add_1[ys_add_1 >= h] = h - 1
-
+    # Gauss Filter
     gauss = np.array([2, 4, 5, 4, 2,
                       4, 9, 12, 9, 4,
                       5, 12, 15, 12, 5,
                       4, 9, 12, 9, 4,
-                      2, 4, 5, 4, 2]).reshape(5, 5) / 159
-
-    img_10 = img[ys_sub_1, xs]
-    img_12 = img[ys_add_1, xs]
-    img_01 = img[ys, xs_sub_1]
-    img_21 = img[ys, xs_add_1]
+                      2, 4, 5, 4, 2]) / 159
+    img_neighbors = Neighbors(img, 5)
+    img = np.matmul(img_neighbors.neighbors, gauss)
 
     # Calculate gradient
-    grad_x = (img_21 - img_01) / 2
-    grad_y = (img_12 - img_10) / 2
+    img_neighbors = Neighbors(img, 3)
+    grad_x = (img_neighbors.at(1, 0) - img_neighbors.at(-1, 0)) / 2
+    grad_y = (img_neighbors.at(0, 1) - img_neighbors.at(0, -1)) / 2
     grad: ndarray = np.power(grad_x * grad_x + grad_y * grad_y, 0.5)
 
     # Non-Maximum Suppression
@@ -196,36 +217,39 @@ def canny(img: ndarray) -> ndarray:
     grad_y_fix = np.where(grad_y == 0, epsilon, grad_y)
     grad_k: ndarray = grad_y / grad_x_fix
     grad_k_abs = np.abs(grad_k)
-    grad_k_imp: ndarray = np.ones(grad_k.shape) - grad_k_abs
-    grad_t: ndarray = grad_x / grad_y_fix
-    grad_t_abs = np.abs(grad_t)
-    grad_t_imp: ndarray = np.ones(grad_t.shape) - grad_t_abs
+    grad_t_abs = np.abs(grad_x / grad_y_fix)
 
-    grad_00 = grad[ys_sub_1, xs_sub_1]
-    grad_01 = grad[ys, xs_sub_1]
-    grad_02 = grad[ys_add_1, xs_sub_1]
-    grad_10 = grad[ys_sub_1, xs]
-    grad_11 = grad
-    grad_12 = grad[ys_add_1, xs]
-    grad_20 = grad[ys_sub_1, xs_add_1]
-    grad_21 = grad[ys, xs_add_1]
-    grad_22 = grad[ys_add_1, xs_add_1]
+    grad_neighbors = Neighbors(grad, 3)
 
-    descriminate = [(grad_k >= 1, grad_t_abs, grad_t_imp,
-                     grad_10, grad_20, grad_12, grad_02),
-                    (grad_k <= -1, grad_t_abs, grad_t_imp,
-                     grad_10, grad_00, grad_12, grad_22),
-                    ((grad_k < 1) & (grad_k >= 0), grad_k_abs, grad_k_imp,
-                     grad_21, grad_20, grad_01, grad_02),
-                    ((grad_k > -1) & (grad_k < 0), grad_k_abs, grad_k_imp,
-                     grad_21, grad_22, grad_01, grad_00), ]
+    descriminate = [
+        (
+            grad_k >= 1, grad_t_abs,
+            grad_neighbors.at(1, 1), grad_neighbors.at(0, 1),
+            grad_neighbors.at(-1, -1), grad_neighbors.at(0, -1),
+        ),
+        (
+            grad_k <= -1, grad_t_abs,
+            grad_neighbors.at(-1, 1), grad_neighbors.at(0, 1),
+            grad_neighbors.at(1, -1), grad_neighbors.at(0, -1),
+        ),
+        (
+            (grad_k < 1) & (grad_k >= 0), grad_k_abs,
+            grad_neighbors.at(1, 1), grad_neighbors.at(1, 0),
+            grad_neighbors.at(-1, -1), grad_neighbors.at(-1, 0),
+        ),
+        (
+            (grad_k > -1) & (grad_k < 0), grad_k_abs,
+            grad_neighbors.at(-1, 1), grad_neighbors.at(-1, 0),
+            grad_neighbors.at(1, -1), grad_neighbors.at(1, 0),
+        )
+    ]
 
     d1 = np.zeros(img.shape)
     d2 = np.zeros(img.shape)
-    for cond, gr, gr_imp, p0, p1, p2, p3 in descriminate:
-        d1 = np.where(cond, gr * p0 + gr_imp * p1, d1)
-        d2 = np.where(cond, gr * p2 + gr_imp * p3, d2)
-    grad = np.where((grad >= d1) & (grad >= d2), grad, 0)
+    for cond, coef, p0, p1, p2, p3 in descriminate:
+        d1 = np.where(cond, coef * p0 + (np.ones(coef.shape) - coef) * p1, d1)
+        d2 = np.where(cond, coef * p2 + (np.ones(coef.shape) - coef) * p3, d2)
+    grad_suppress = np.where((grad >= d1) & (grad >= d2), grad, 0)
 
     # Double thresholding
     high, low = 0.8, 0.4
@@ -234,15 +258,10 @@ def canny(img: ndarray) -> ndarray:
     thresh_low = sorted_grad[int(len(sorted_grad) * low)]
     thresh_high = sorted_grad[int(len(sorted_grad) * high)]
 
-    neighbor = np.dstack(
-        [grad_00, grad_01, grad_02,
-         grad_10, grad_11, grad_12,
-         grad_20, grad_21, grad_22]
-    )
+    neighbors = Neighbors(grad_suppress, 3).neighbors
 
-    grad = np.where((grad > thresh_low) &
-                    (np.max(neighbor, axis=2) > thresh_high), 1, 0)
-    return grad
+    return np.where((grad_suppress > thresh_low) &
+                    (np.max(neighbors, axis=2) > thresh_high), 1, 0)
 
 
 def morphology(img: ndarray) -> ndarray:
