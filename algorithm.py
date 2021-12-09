@@ -27,6 +27,15 @@ def split_channel(func: Callable[[ndarray], ndarray]):
     return wrapper
 
 
+def position_index(arr: ndarray, idx: ndarray) -> ndarray:
+    ''' arr: shape=(L, d)
+        idx: shape=(L,) idx in [0, d)
+        return: arr[idx] shape=(L,)
+    '''
+    onehot = np.eye(arr.shape[1], dtype='int')[idx]
+    return (arr * onehot).sum(axis=1)
+
+
 class Neighbors:
     ''' Get k*k neighbors for each item in the input array.
 
@@ -90,43 +99,53 @@ def equalize(img: ndarray) -> ndarray:
 
 @split_channel
 def denoise(img: ndarray) -> ndarray:
-    def median_filter_slow(img: ndarray, k: int) -> ndarray:
-        if k % 2 == 0:
-            k += 1
-        p = k // 2
-        ret = img.copy()
+    def median_filter(img: ndarray, k: int) -> ndarray:
+        return np.median(Neighbors(img, k).neighbors, axis=2)
+
+    def adaptive_median_filter(img: ndarray, k1: int, k2: int) -> ndarray:
         h, w = img.shape
-        for i in range(p, w - p):
-            for j in range(p, h - p):
-                ret[j, i] = np.median(img[j - p:j + p, i - p:i + p])
-        return ret
+        mult_neighbor = [Neighbors(img, i).neighbors
+                         for i in range(k1, k2 + 1, 2)]
 
-    def median_filter_fast(img: ndarray, k: int) -> ndarray:
-        if k % 2 == 0:
-            k += 1
-        p = k // 2
-        h, w = img.shape
+        # median / max / min: shape=((k2 - k1) // 2, h * w)
+        medians: ndarray = np.array([np.median(n, axis=2).flatten()
+                                    for n in mult_neighbor])
+        maxs: ndarray = np.array([np.max(n, axis=2).flatten()
+                                  for n in mult_neighbor])
+        mins: ndarray = np.array([np.min(n, axis=2).flatten()
+                                  for n in mult_neighbor])
 
-        # extend the image to handle margin cases
-        row_ext = img.copy()
-        for i in range(p):
-            row_ext = np.insert(row_ext, 0, img[i + 1, :], axis=0)
-        ext = row_ext.copy()
-        for i in range(p):
-            ext = np.insert(ext, 0, row_ext[:, i + 1], axis=1)
+        # Calculate suitable window size foreach pixel, default largest size
+        index = np.ones(h * w, 'int') * (len(medians) - 1)
 
-        # trick: put k*k neighbors of a pixel into the array
-        tmp = np.dstack([np.roll(ext, -i, axis=1) for i in range(k)])
-        ret = np.dstack([np.roll(tmp, -i, axis=0) for i in range(k)])
-        ret = np.median(ret, axis=2)[:h, :w]
-        return ret
+        for i in range(len(medians) - 1):
+            index = np.where(
+                # median is not noisy
+                (medians[i] < maxs[i]) & (medians[i] > mins[i])
+                # need update
+                & (i < index),
+                i, index)
+
+        img_flatten = img.flatten()  # h * w
+        max_selected = position_index(maxs.transpose(), index)
+        min_selected = position_index(mins.transpose(), index)
+        med_selected = position_index(medians.transpose(), index)
+
+        ret = np.where(
+            # this pixel is not noisy
+            (img_flatten < max_selected) & (img_flatten > min_selected),
+            img_flatten,  # keep
+            med_selected  # replaced by median
+        )
+        return ret.reshape(h, w)
 
     if img.dtype == np.uint8:
         img = img / 255
-    return median_filter_fast(img, 3)
+    return median_filter(img, 3)
+    return adaptive_median_filter(img, 3, 9)
 
 
-@split_channel
+@ split_channel
 def interpolate(img: ndarray) -> ndarray:
     def bilinear(img: ndarray, kw: float, kh: float) -> ndarray:
         # prepare the param matrix (shape [h, w, 4])
@@ -183,12 +202,10 @@ def butterworth(img: ndarray) -> ndarray:
         h, w = freq.shape
         xs = np.repeat(np.array([range(w)]), h, axis=0)
         ys = np.repeat(np.array([range(h)]), w, axis=0).transpose()
-        # D_uv = sqrt((u - M / 2) ^ 2 + (v - N / 2) ^ 2)
         xs = np.power((xs - w / 2), 2)
         ys = np.power((ys - h / 2), 2)
         D_uv = np.power(xs + ys, 0.5)
         H_uv = 1 / (1 + np.power(D_uv / D_0, 2 * k))
-        # G_uv = H_uv * F_uv
         freq *= H_uv
         return np.abs(ifft2(ifftshift(freq)))
 
@@ -252,7 +269,7 @@ def canny(img: ndarray) -> ndarray:
     grad_suppress = np.where((grad >= d1) & (grad >= d2), grad, 0)
 
     # Double thresholding
-    high, low = 0.8, 0.4
+    high, low = 0.75, 0.4
 
     sorted_grad = np.sort(grad.reshape(-1))
     thresh_low = sorted_grad[int(len(sorted_grad) * low)]
@@ -265,4 +282,13 @@ def canny(img: ndarray) -> ndarray:
 
 
 def morphology(img: ndarray) -> ndarray:
-    return None
+    def dilate(img: ndarray, k: int) -> ndarray:
+        return np.max(Neighbors(img, k).neighbors, axis=2)
+
+    def erode(img: ndarray, k: int) -> ndarray:
+        return np.min(Neighbors(img, k).neighbors, axis=2)
+
+    k = 3
+    img = erode(img, k)
+    img = dilate(img, k)
+    return img
