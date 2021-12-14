@@ -39,7 +39,8 @@ def save_file(img: ndarray, method: Callable, iname: str, oname: str, flatten: b
         output = os.path.join(oname, method_name, iname + '.png')
     if not os.path.exists(os.path.dirname(output)):
         os.makedirs(os.path.dirname(output))
-    if img.dtype == np.float64:
+
+    if img.dtype == np.float64 or np.all((img <= 1) & (img >= 0)):
         io.imsave(output, (img*255).astype(np.uint8))
     else:
         io.imsave(output, img)
