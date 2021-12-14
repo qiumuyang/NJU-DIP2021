@@ -142,7 +142,8 @@ def denoise(img: ndarray) -> ndarray:
     if img.dtype == np.uint8:
         img = img / 255
     return median_filter(img, 3)
-    # return adaptive_median_filter(img, 3, 9)
+
+    # return adaptive_median_filter(img, 3, 9) # seems not working
 
 
 @split_channel
@@ -226,6 +227,7 @@ def canny(img: ndarray) -> ndarray:
     grad: ndarray = np.power(grad_x * grad_x + grad_y * grad_y, 0.5)
 
     # Non-Maximum Suppression
+    # here we get gradient by interpolation (instead of approximation)
     epsilon = np.finfo(np.float64).eps
     grad_x_fix = np.where(grad_x == 0, epsilon, grad_x)
     grad_y_fix = np.where(grad_y == 0, epsilon, grad_y)
