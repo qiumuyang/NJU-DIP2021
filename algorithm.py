@@ -142,47 +142,44 @@ def denoise(img: ndarray) -> ndarray:
     if img.dtype == np.uint8:
         img = img / 255
     return median_filter(img, 3)
-    return adaptive_median_filter(img, 3, 9)
+    # return adaptive_median_filter(img, 3, 9)
 
 
-@ split_channel
+@split_channel
 def interpolate(img: ndarray) -> ndarray:
     def bilinear(img: ndarray, kw: float, kh: float) -> ndarray:
         # prepare the param matrix (shape [h, w, 4])
-        r10 = np.roll(img, -1, axis=1)
-        r10[:, -1] = img[:, -1]  # margin
-        r01 = np.roll(img, -1, axis=0)
-        r01[-1, :] = img[-1, :]  # margin
-        r11 = np.roll(r01, -1, axis=1)
-        r11[:, -1] = r01[:, -1]  # margin
+        neighbors = Neighbors(img, 3)
         # p0 = f(1, 0) - f(0, 0)
-        p0 = r10 - img
+        p0 = neighbors.at(1, 0) - img
         # p1 = f(0, 1) - f(0, 0)
-        p1 = r01 - img
+        p1 = neighbors.at(0, 1) - img
         # p2 = f(1, 1) + f(0, 0) - f(0, 1) - f(1, 0)
-        p2 = r11 + img - r01 - r10
+        p2 = neighbors.at(1, 1) + img - neighbors.at(0, 1) - neighbors.at(1, 0)
+        # p3 = f(0, 0)
+        p3 = img
         # f(x, y) = p0 * x + p1 * y + p2 * x * y + f(0, 0)
-        params = np.dstack([p0, p1, p2, img])  # p3 = f(0, 0)
+        #         = [p0, p1, p2, p3] \mul [x, y, xy, 1]
+        #         x \in [0, 1), y \in [0, 1)
+        params = np.dstack([p0, p1, p2, p3])
 
-        # get coordinates mapping to the origin image
+        # map the pixels' position of the target image to the origin
         h, w = img.shape
         hh, ww = round(h * kh), round(w * kw)
         xs = np.repeat(np.array([range(ww)]), hh, axis=0) / kw
         ys = np.repeat(np.array([range(hh)]), ww, axis=0).transpose() / kh
-        xy: ndarray = np.dstack([xs, ys])
-        pivots = xy.astype(np.uint32)
-        xy -= pivots
+        xs_int = xs.astype('int')
+        ys_int = ys.astype('int')
+        xs -= xs_int
+        ys -= ys_int
 
-        # get each coordinate's params using pivots (shape [h, w, 2])
-        selected_params = params[pivots[:, :, 1], pivots[:, :, 0]]
+        # prepare the matrix
+        target_mat_1: ndarray = params[ys_int, xs_int].reshape(hh, ww, 1, 4)
+        target_mat_2: ndarray = np.dstack((xs, ys, xs * ys, np.ones((hh, ww)))) \
+                                  .reshape(hh, ww, 4, 1)
 
-        # calculate coordinate for multiply
-        # (shape [h, w, 1, 4] @ shape [h, w, 4, 1] => shape[h, w, 1, 1])
-        xy_values: ndarray = np.dstack(
-            [xy[:, :, 0], xy[:, :, 1], xy[:, :, 0] * xy[:, :, 1], np.ones((hh, ww))])
-        ret = np.matmul(selected_params.reshape(hh, ww, 1, 4),
-                        xy_values.reshape(hh, ww, 4, 1))
-        ret = ret.reshape(hh, ww)
+        # shape [h, w, 4, 1] \mul shape [h, w, 4, 1] => shape[h, w, 1, 1]
+        ret = np.matmul(target_mat_1, target_mat_2).reshape(hh, ww)
         return ret
 
     if img.dtype == np.uint8:
