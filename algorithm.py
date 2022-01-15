@@ -6,17 +6,16 @@ from numpy.fft import fft2, fftshift, ifft2, ifftshift
 
 
 def split_channel(func: Callable[[ndarray], ndarray]):
-    ''' Split channels of the input image.
+    """ Split channels of the input image.
 
-    Assume the decorated function only accept gray-scale image.
-
-    If the input has more than one channels, separately call decorated function on each channel and merge the result at the end.
-    '''
+    Assume the decorated function only accept gray-scale image. If the input has more than one channels, separately
+    call decorated function on each channel and merge the result at the end.
+    """
 
     @wraps(func)
     def wrapper(*args):
         img: ndarray = args[0]
-        if img.ndim == 2:    # gray-scale
+        if img.ndim == 2:  # gray-scale
             return func(img)
         elif img.ndim == 3:  # rgb
             channels = [func(img[:, :, i]) for i in range(3)]
@@ -28,22 +27,24 @@ def split_channel(func: Callable[[ndarray], ndarray]):
 
 
 def position_index(arr: ndarray, idx: ndarray) -> ndarray:
-    ''' arr: shape=(L, d)
-        idx: shape=(L,) idx in [0, d)
-        return: arr[idx] shape=(L,)
-    '''
+    """ Select from arr with each index in idx.
+
+    :param arr: shape=(L, d)
+    :param idx: shape=(L,), idx in [0, d)
+    :return: arr[idx] shape=(L,)
+    """
     onehot = np.eye(arr.shape[1], dtype='int')[idx]
     return (arr * onehot).sum(axis=1)
 
 
 class Neighbors:
-    ''' Get k*k neighbors for each item in the input array.
+    """ Get k*k neighbors for each item in the input array.
 
-    '''
+    """
 
     def __init__(self, arr: ndarray, k: int) -> None:
-        assert(k % 2 == 1)
-        assert(arr.ndim == 2)
+        assert (k % 2 == 1)
+        assert (arr.ndim == 2)
 
         self.k = k
 
@@ -80,7 +81,7 @@ def plane(img: ndarray) -> ndarray:
     _planes.append(np.ones(img.shape))
 
     # horizontally stack (group by 3)
-    _stacked: List[ndarray] = [np.hstack(_planes[i*3:i*3+3]) for i in range(3)]
+    _stacked: List[ndarray] = [np.hstack(_planes[i * 3:i * 3 + 3]) for i in range(3)]
     return np.vstack(_stacked)
 
 
@@ -109,7 +110,7 @@ def denoise(img: ndarray) -> ndarray:
 
         # median / max / min: shape=((k2 - k1) // 2, h * w)
         medians: ndarray = np.array([np.median(n, axis=2).flatten()
-                                    for n in mult_neighbor])
+                                     for n in mult_neighbor])
         maxs: ndarray = np.array([np.max(n, axis=2).flatten()
                                   for n in mult_neighbor])
         mins: ndarray = np.array([np.min(n, axis=2).flatten()
@@ -177,7 +178,7 @@ def interpolate(img: ndarray) -> ndarray:
         # prepare the matrix
         target_mat_1: ndarray = params[ys_int, xs_int].reshape(hh, ww, 1, 4)
         target_mat_2: ndarray = np.dstack((xs, ys, xs * ys, np.ones((hh, ww)))) \
-                                  .reshape(hh, ww, 4, 1)
+            .reshape(hh, ww, 4, 1)
 
         # shape [h, w, 4, 1] \mul shape [h, w, 4, 1] => shape[h, w, 1, 1]
         ret = np.matmul(target_mat_1, target_mat_2).reshape(hh, ww)
@@ -237,7 +238,7 @@ def canny(img: ndarray) -> ndarray:
 
     grad_neighbors = Neighbors(grad, 3)
 
-    descriminate = [
+    discriminate = [
         (
             grad_k >= 1, grad_t_abs,
             grad_neighbors.at(1, 1), grad_neighbors.at(0, 1),
@@ -262,7 +263,7 @@ def canny(img: ndarray) -> ndarray:
 
     d1 = np.zeros(img.shape)
     d2 = np.zeros(img.shape)
-    for cond, coef, p0, p1, p2, p3 in descriminate:
+    for cond, coef, p0, p1, p2, p3 in discriminate:
         d1 = np.where(cond, coef * p0 + (np.ones(coef.shape) - coef) * p1, d1)
         d2 = np.where(cond, coef * p2 + (np.ones(coef.shape) - coef) * p3, d2)
     grad_suppress = np.where((grad >= d1) & (grad >= d2), grad, 0)
